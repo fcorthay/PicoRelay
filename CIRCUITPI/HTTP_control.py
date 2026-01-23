@@ -1,10 +1,19 @@
 import os
+import time
 import board
 from digitalio import DigitalInOut, Direction
+import ipaddress
+import mdns
 import socketpool
 import wifi
 from adafruit_httpserver import Request, Response, Server
                                                                      # constants
+USE_FIXED_IP_ADDRESS = True
+IP_ADDRESS = ipaddress.IPv4Address('192.168.1.85')
+IP_NETMASK = ipaddress.IPv4Address('255.255.255.0')
+IP_GATEWAY = ipaddress.IPv4Address('192.168.1.1')
+USE_MDNS = True
+MDNS_NAME = 'WiFiSwitch'
 SERVER_PORT = 80
 HOME_PAGE = """
 <html lang="en">
@@ -19,6 +28,9 @@ HOME_PAGE = """
   </p>
   <p>
    Check the relay statuses in the <a href="/relays">status</a> page.
+   <br />
+   Set relay 1 <a href="/relay/1/on">on</a> or <a href="/relay/1/off">off</a>,
+   set relay 2 <a href="/relay/2/on">on</a> or <a href="/relay/2/off">off</a>.
   </p>
  </body>
 </html>
@@ -67,10 +79,16 @@ relay1 = DigitalInOut(board.GP6)
 relay1.direction = Direction.OUTPUT
 relay2 = DigitalInOut(board.GP7)
 relay2.direction = Direction.OUTPUT
+led = DigitalInOut(board.LED)
+led.direction = Direction.OUTPUT
 
 # ------------------------------------------------------------------------------
 # functions
 # ------------------------------------------------------------------------------
+                                                               # pulse board LED
+led.value = True
+time.sleep(1)
+led.value = False
                                                                # get relay value
 def get_relay_state(relay_id) :
     boolean_value = relay1.value
@@ -96,18 +114,34 @@ def set_relay(relay_id, state) :
         relay2.value = value
 
 # ------------------------------------------------------------------------------
-                                                             # Wi-Fi credentials
+                                                         # get Wi-Fi credentials
 wifi_ssid = os.getenv('CIRCUITPY_WIFI_SSID')
 wifi_password = os.getenv('CIRCUITPY_WIFI_PASSWORD')
+                                                                 # set mDNS name
+if USE_MDNS :
+    print()
+    print("Using mDNS name \"%s\"" % MDNS_NAME)
+    mdns_server = mdns.Server(wifi.radio)
+    mdns_server.hostname = MDNS_NAME
+    mdns_server.advertise_service(
+        service_type='_http', protocol='_tcp', port=SERVER_PORT
+    )
                                                               # connect to Wi-Fi
 print()
 print("Connecting to \"%s\" Wi-Fi" % wifi_ssid)
+if USE_FIXED_IP_ADDRESS :
+    print(INDENT + 'IP address : %s' % str(IP_ADDRESS))
+    wifi.radio.set_ipv4_address(
+        ipv4=IP_ADDRESS, netmask=IP_NETMASK, gateway=IP_GATEWAY
+    )
 wifi.radio.connect(wifi_ssid, wifi_password)
 print(INDENT + 'Connected')
 IP_address = str(wifi.radio.ipv4_address)
                                                            # create a web server
 pool = socketpool.SocketPool(wifi.radio)
 server = Server(pool, debug=True)
+                                                             # turn board LED on
+led.value = True
                                                                      # home page
 @server.route("/")
 def serve_home_page(request: Request) :
@@ -115,8 +149,8 @@ def serve_home_page(request: Request) :
                                                                    # status page
 @server.route("/relays")
 def serve_home_page(request: Request) :
-    relay1_value = get_relay_value(1)
-    relay2_value = get_relay_value(2)
+    relay1_value = get_relay_state(1)
+    relay2_value = get_relay_state(2)
     html_page = STATUS_PAGE
     html_page = html_page.replace('relay1_value', relay1_value)
     html_page = html_page.replace('relay2_value', relay2_value)
